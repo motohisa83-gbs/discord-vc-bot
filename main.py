@@ -1,26 +1,95 @@
 import os
 import asyncio
 import discord
+import pandas as pd
 from discord.ext import commands, tasks
+from discord import app_commands, Interaction
+from discord.ui import View, Button
 
 intents = discord.Intents.default()
+intents.message_content = True
 intents.voice_states = True
 intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
+tree = bot.tree
 
-# ▼ 環境に応じて変更
+# ▼ VC通知用設定
 TARGET_VC_CHANNEL_ID = 1352188801023479863
 NOTIFY_TEXT_CHANNEL_ID = 1359151599238381852
 NOTIFY_ROLE_ID = 1356581455337099425
-
 pending_alerts = {}
 active_vc_timer = {}
 
+# クイズファイルの読み込み
+df = pd.read_excel("mba_quiz_multiple_choice_template_fill.xlsx")
+
+class QuizView(View):
+    def __init__(self, correct_answers, explanation):
+        super().__init__(timeout=60)
+        self.correct = set(correct_answers.upper().replace(" ", "").split(","))
+        self.explanation = explanation
+        self.user_answers = set()
+
+        for label in ["A", "B", "C", "D"]:
+            self.add_item(QuizButton(label, self))
+
+        self.add_item(SubmitButton(self))
+
+class QuizButton(Button):
+    def __init__(self, label, view):
+        super().__init__(label=label, style=discord.ButtonStyle.secondary)
+        self.view_ref = view
+
+    async def callback(self, interaction: Interaction):
+        label = self.label
+        if label in self.view_ref.user_answers:
+            self.view_ref.user_answers.remove(label)
+            await interaction.response.send_message(f"❌ {label} を選択解除しました。", ephemeral=True)
+        else:
+            self.view_ref.user_answers.add(label)
+            await interaction.response.send_message(f"✅ {label} を選択しました。", ephemeral=True)
+
+class SubmitButton(Button):
+    def __init__(self, view):
+        super().__init__(label="✅ 回答を確定", style=discord.ButtonStyle.success)
+        self.view_ref = view
+
+    async def callback(self, interaction: Interaction):
+        selected = self.view_ref.user_answers
+        correct = self.view_ref.correct
+        if selected == correct:
+            result = "🟢 正解です！お見事！"
+        else:
+            result = f"🔴 不正解です…\n正解は: {', '.join(correct)}"
+
+        msg = f"{result}\n\n💡 解説: {self.view_ref.explanation}"
+        for item in self.view_ref.children:
+            item.disabled = True
+        await interaction.response.edit_message(content=msg, view=self.view_ref)
+
 @bot.event
 async def on_ready():
+    await tree.sync()
     print(f"{bot.user} has connected!")
     periodic_vc_summary.start()
+
+@tree.command(name="quiz", description="MBAクイズを出題します")
+async def quiz_command(interaction: Interaction):
+    quiz = df.sample(1).iloc[0]
+    question = quiz["Question"]
+    options = [quiz["OptionA"], quiz["OptionB"], quiz["OptionC"], quiz["OptionD"]]
+    answer = quiz["Answer"]
+    explanation = quiz["Explanation"]
+
+    text = f"📘 **MBAクイズ**\n\n❓ {question}\n"
+    labels = ["A", "B", "C", "D"]
+    for i, opt in enumerate(options):
+        if pd.notna(opt):
+            text += f"{labels[i]}. {opt}\n"
+
+    view = QuizView(answer, explanation)
+    await interaction.response.send_message(text, view=view)
 
 @bot.event
 async def on_voice_state_update(member, before, after):
@@ -55,7 +124,6 @@ async def on_voice_state_update(member, before, after):
         if text_channel:
             await text_channel.send(f"🚪 {member.display_name} さんが退出しました。現在VC参加者: {count}人")
             if count == 1:
-                # 1人だけになったら再度タイマー開始
                 if vc.id not in pending_alerts:
                     task = asyncio.create_task(alert_if_alone(vc, text_channel, role))
                     pending_alerts[vc.id] = task
