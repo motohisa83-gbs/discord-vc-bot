@@ -3,13 +3,6 @@ name: Control Heroku Dyno (Schedule Start/Stop)
 on:
   workflow_dispatch:      # ← 手動実行を許可する
   schedule:
-    - cron: '0 21 * * *'  # JST 6:00 起動
-    - cron: '0 0 * * *'   # JST 9:00 停止
-    - cron: '0 9 * * *'   # JST 18:00 起動
-    - cron: '0 15 * * *'  # JST 24:00 停止
-
-on:
-  schedule:
     # 毎日 6:00 JST（=前日21:00 UTC）に起動
     - cron: '0 21 * * *'
     # 毎日 9:00 JST（=0:00 UTC）に停止
