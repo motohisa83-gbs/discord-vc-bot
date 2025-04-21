@@ -1,0 +1,38 @@
+name: Control Heroku Dyno (Schedule Start/Stop)
+
+on:
+  schedule:
+    # 毎日 6:00 JST（=前日21:00 UTC）に起動
+    - cron: '0 21 * * *'
+    # 毎日 9:00 JST（=0:00 UTC）に停止
+    - cron: '0 0 * * *'
+    # 毎日 18:00 JST（=9:00 UTC）に起動
+    - cron: '0 9 * * *'
+    # 毎日 24:00 JST（=15:00 UTC）に停止
+    - cron: '0 15 * * *'
+
+jobs:
+  control-dyno:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set dyno quantity based on event time
+        env:
+          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+          HEROKU_APP_NAME: ${{ secrets.HEROKU_APP_NAME }}
+        run: |
+          # 現在のUTC時間で起動 or 停止を判断
+          UTC_HOUR=$(date -u +"%H")
+
+          if [ "$UTC_HOUR" = "0" ] || [ "$UTC_HOUR" = "15" ]; then
+            QUANTITY=0  # 停止
+          else
+            QUANTITY=1  # 起動
+          fi
+
+          echo "Setting dyno quantity to $QUANTITY"
+
+          curl -n -X PATCH https://api.heroku.com/apps/${HEROKU_APP_NAME}/formation/worker \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/vnd.heroku+json; version=3" \
+            -H "Authorization: Bearer ${HEROKU_API_KEY}" \
+            -d "{\"quantity\": ${QUANTITY}}"
