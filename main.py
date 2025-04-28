@@ -1,4 +1,5 @@
 import os
+import random
 import asyncio
 import discord
 import pandas as pd
@@ -91,12 +92,34 @@ async def quiz_command(interaction: Interaction):
     view = QuizView(answer, explanation)
     await interaction.response.send_message(text, view=view)
 
+@tree.command(name="group_split", description="VC参加者を指定人数でグループ分けします")
+@app_commands.describe(group_size="1グループあたりの人数")
+async def group_split(interaction: Interaction, group_size: int):
+    vc_channel = interaction.guild.get_channel(TARGET_VC_CHANNEL_ID)
+    text_channel = interaction.guild.get_channel(NOTIFY_TEXT_CHANNEL_ID)
+
+    if vc_channel is None or len(vc_channel.members) == 0:
+        await interaction.response.send_message("VCに参加しているメンバーがいません。", ephemeral=True)
+        return
+
+    members = vc_channel.members
+    random.shuffle(members)
+
+    groups = [members[i:i + group_size] for i in range(0, len(members), group_size)]
+    result_lines = []
+    for idx, group in enumerate(groups, 1):
+        names = ", ".join([member.display_name for member in group])
+        result_lines.append(f"グループ{idx}: {names}")
+
+    result_message = "\n".join(result_lines)
+    await text_channel.send(f"🎲 **VCグループ分け結果（{group_size}人ずつ）**\n{result_message}")
+    await interaction.response.send_message("グループ分け結果をVCコメント欄に投稿しました。", ephemeral=True)
+
 @bot.event
 async def on_voice_state_update(member, before, after):
     text_channel = member.guild.get_channel(NOTIFY_TEXT_CHANNEL_ID)
     role = member.guild.get_role(NOTIFY_ROLE_ID)
 
-    # VC参加
     if after.channel and after.channel.id == TARGET_VC_CHANNEL_ID and (before.channel is None or before.channel.id != TARGET_VC_CHANNEL_ID):
         vc = after.channel
         count = len(vc.members)
@@ -116,7 +139,6 @@ async def on_voice_state_update(member, before, after):
             else:
                 await text_channel.send(f"🔥 {member.display_name}さんも参戦！VCがにぎやかになってきたよ！")
 
-    # VC退出
     elif before.channel and before.channel.id == TARGET_VC_CHANNEL_ID and (after.channel is None or after.channel.id != TARGET_VC_CHANNEL_ID):
         vc = before.channel
         count = len(vc.members)
@@ -134,7 +156,6 @@ async def on_voice_state_update(member, before, after):
                 if vc.id in active_vc_timer:
                     del active_vc_timer[vc.id]
 
-# 延期通知 (5分間一人)
 async def alert_if_alone(vc_channel, text_channel, role):
     try:
         await asyncio.sleep(300)
@@ -143,7 +164,6 @@ async def alert_if_alone(vc_channel, text_channel, role):
     except asyncio.CancelledError:
         pass
 
-# 定期通知 (10分ごと)
 @tasks.loop(minutes=10)
 async def periodic_vc_summary():
     for guild in bot.guilds:
