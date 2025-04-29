@@ -6,6 +6,7 @@ import pandas as pd
 from discord.ext import commands, tasks
 from discord import app_commands, Interaction
 from discord.ui import View, Button
+from collections import defaultdict
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -21,6 +22,7 @@ NOTIFY_TEXT_CHANNEL_ID = 1359151599238381852
 NOTIFY_ROLE_ID = 1356581455337099425
 pending_alerts = {}
 active_vc_timer = {}
+schedule_votes = {}  # スケジュール投票の記録用（message_id: [date_list]）
 
 # クイズファイルの読み込み
 df = pd.read_excel("mba_quiz_multiple_choice_template_fill.xlsx")
@@ -114,6 +116,48 @@ async def group_split(interaction: Interaction, group_size: int):
     result_message = "\n".join(result_lines)
     await text_channel.send(f"🎲 **VCグループ分け結果（{group_size}人ずつ）**\n{result_message}")
     await interaction.response.send_message("グループ分け結果をVCコメント欄に投稿しました。", ephemeral=True)
+
+@tree.command(name="schedule", description="日程調整用の投票を作成します")
+@app_commands.describe(dates="カンマ区切りで日程を入力（例: 5/10, 5/11, 5/12）")
+async def schedule(interaction: Interaction, dates: str):
+    date_list = [d.strip() for d in dates.split(",") if d.strip()]
+
+    if not date_list:
+        await interaction.response.send_message("日程が正しく入力されていません。", ephemeral=True)
+        return
+
+    text_channel = interaction.channel
+    msg_text = "📅 **日程調整 投票**\nリアクションで希望日程を選んでください！\n"
+    for idx, date in enumerate(date_list, 1):
+        msg_text += f"{idx}. {date}\n"
+
+    message = await text_channel.send(msg_text)
+
+    reactions = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+    for i in range(len(date_list)):
+        if i < len(reactions):
+            await message.add_reaction(reactions[i])
+
+    schedule_votes[message.id] = date_list
+    asyncio.create_task(schedule_result_report(message, date_list, delay_hours=48))
+
+    await interaction.response.send_message("日程調整用の投票を作成しました！", ephemeral=True)
+
+async def schedule_result_report(message, date_list, delay_hours=48):
+    await asyncio.sleep(delay_hours * 3600)
+    await message.channel.fetch_message(message.id)  # 再取得
+    message = await message.channel.fetch_message(message.id)
+
+    reactions = message.reactions
+    counts = defaultdict(int)
+    for i, reaction in enumerate(reactions):
+        users = await reaction.users().flatten()
+        counts[date_list[i]] = len([u for u in users if not u.bot])
+
+    sorted_dates = sorted(counts.items(), key=lambda x: x[1], reverse=True)
+    result_lines = [f"{date}: {count}票" for date, count in sorted_dates]
+
+    await message.channel.send("🗳️ **日程調整 結果発表（48時間後）**\n" + "\n".join(result_lines))
 
 @bot.event
 async def on_voice_state_update(member, before, after):
