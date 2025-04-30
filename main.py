@@ -7,6 +7,7 @@ from discord.ext import commands, tasks
 from discord import app_commands, Interaction
 from discord.ui import View, Button
 from collections import defaultdict
+from datetime import datetime, timedelta
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -22,10 +23,11 @@ NOTIFY_TEXT_CHANNEL_ID = 1359151599238381852
 NOTIFY_ROLE_ID = 1356581455337099425
 pending_alerts = {}
 active_vc_timer = {}
-schedule_votes = {}  # スケジュール投票の記録用（message_id: [date_list]）
+schedule_votes = {}
 
-# クイズファイルの読み込み
+# クイズファイルとトークテーマの読み込み
 df = pd.read_excel("mba_quiz_multiple_choice_template_fill.xlsx")
+df_talk = pd.read_excel("talk_theme.xlsx", skiprows=3)
 
 class QuizView(View):
     def __init__(self, correct_answers, explanation):
@@ -77,49 +79,18 @@ async def on_ready():
     print(f"{bot.user} has connected!")
     periodic_vc_summary.start()
 
-@tree.command(name="quiz", description="MBAクイズを出題します")
-async def quiz_command(interaction: Interaction):
-    quiz = df.sample(1).iloc[0]
-    question = quiz["Question"]
-    options = [quiz["OptionA"], quiz["OptionB"], quiz["OptionC"], quiz["OptionD"]]
-    answer = quiz["Answer"]
-    explanation = quiz["Explanation"]
-
-    text = f"📘 **MBAクイズ**\n\n❓ {question}\n"
-    labels = ["A", "B", "C", "D"]
-    for i, opt in enumerate(options):
-        if pd.notna(opt):
-            text += f"{labels[i]}. {opt}\n"
-
-    view = QuizView(answer, explanation)
-    await interaction.response.send_message(text, view=view)
-
-@tree.command(name="group_split", description="VC参加者を指定人数でグループ分けします")
-@app_commands.describe(group_size="1グループあたりの人数")
-async def group_split(interaction: Interaction, group_size: int):
-    vc_channel = interaction.guild.get_channel(TARGET_VC_CHANNEL_ID)
-    text_channel = interaction.guild.get_channel(NOTIFY_TEXT_CHANNEL_ID)
-
-    if vc_channel is None or len(vc_channel.members) == 0:
-        await interaction.response.send_message("VCに参加しているメンバーがいません。", ephemeral=True)
-        return
-
-    members = vc_channel.members
-    random.shuffle(members)
-
-    groups = [members[i:i + group_size] for i in range(0, len(members), group_size)]
-    result_lines = []
-    for idx, group in enumerate(groups, 1):
-        names = ", ".join([member.display_name for member in group])
-        result_lines.append(f"グループ{idx}: {names}")
-
-    result_message = "\n".join(result_lines)
-    await text_channel.send(f"🎲 **VCグループ分け結果（{group_size}人ずつ）**\n{result_message}")
-    await interaction.response.send_message("グループ分け結果をVCコメント欄に投稿しました。", ephemeral=True)
+@tree.command(name="talk_theme", description="ランダムにトークテーマを表示します")
+async def talk_theme(interaction: Interaction):
+    themes = df_talk.iloc[:, 1].dropna().tolist()
+    theme = random.choice(themes)
+    await interaction.response.send_message(f"🎤 **今夜のトークテーマ**\n{theme}")
 
 @tree.command(name="schedule", description="日程調整用の投票を作成します")
-@app_commands.describe(dates="カンマ区切りで日程を入力（例: 5/10, 5/11, 5/12）")
-async def schedule(interaction: Interaction, dates: str):
+@app_commands.describe(
+    dates="カンマ区切りで日程を入力（例: 5/10, 5/11, 5/12）",
+    deadline="締切日時を 'YYYY-MM-DD HH:MM' 形式で指定（例: 2025-05-01 18:00）。省略可"
+)
+async def schedule(interaction: Interaction, dates: str, deadline: str = None):
     date_list = [d.strip() for d in dates.split(",") if d.strip()]
 
     if not date_list:
@@ -139,13 +110,21 @@ async def schedule(interaction: Interaction, dates: str):
             await message.add_reaction(reactions[i])
 
     schedule_votes[message.id] = date_list
-    asyncio.create_task(schedule_result_report(message, date_list, delay_hours=48))
+
+    if deadline:
+        try:
+            deadline_dt = datetime.strptime(deadline, "%Y-%m-%d %H:%M")
+            delay = (deadline_dt - datetime.utcnow()).total_seconds()
+            if delay > 0:
+                asyncio.create_task(schedule_result_report(message, date_list, delay))
+        except Exception as e:
+            await interaction.response.send_message(f"⚠️ 締切の指定形式が正しくありません。'YYYY-MM-DD HH:MM' の形式で入力してください。 ({str(e)})", ephemeral=True)
+            return
 
     await interaction.response.send_message("日程調整用の投票を作成しました！", ephemeral=True)
 
-async def schedule_result_report(message, date_list, delay_hours=48):
-    await asyncio.sleep(delay_hours * 3600)
-    await message.channel.fetch_message(message.id)  # 再取得
+async def schedule_result_report(message, date_list, delay):
+    await asyncio.sleep(delay)
     message = await message.channel.fetch_message(message.id)
 
     reactions = message.reactions
@@ -157,7 +136,7 @@ async def schedule_result_report(message, date_list, delay_hours=48):
     sorted_dates = sorted(counts.items(), key=lambda x: x[1], reverse=True)
     result_lines = [f"{date}: {count}票" for date, count in sorted_dates]
 
-    await message.channel.send("🗳️ **日程調整 結果発表（48時間後）**\n" + "\n".join(result_lines))
+    await message.channel.send("🗳️ **日程調整 結果発表（指定締切）**\n" + "\n".join(result_lines))
 
 @bot.event
 async def on_voice_state_update(member, before, after):
