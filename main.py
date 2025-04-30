@@ -20,14 +20,16 @@ tree = bot.tree
 # ▼ VC通知用設定
 TARGET_VC_CHANNEL_ID = 1352188801023479863
 NOTIFY_TEXT_CHANNEL_ID = 1359151599238381852
+ZATSUDAN_CHANNEL_ID = 1366929511027052645
 NOTIFY_ROLE_ID = 1356581455337099425
 pending_alerts = {}
 active_vc_timer = {}
 schedule_votes = {}
 
-# クイズファイルとトークテーマの読み込み
+# クイズ・トーク・雑談テーマの読み込み
 df = pd.read_excel("mba_quiz_multiple_choice_template_fill.xlsx")
 df_talk = pd.read_excel("talk_theme.xlsx", skiprows=3)
+df_zatsudan = pd.read_excel("zatsudan_themes.xlsx")
 
 class QuizView(View):
     def __init__(self, correct_answers, explanation):
@@ -78,12 +80,27 @@ async def on_ready():
     await tree.sync()
     print(f"{bot.user} has connected!")
     periodic_vc_summary.start()
+    daily_zatsudan_theme.start()
 
 @tree.command(name="talk_theme", description="ランダムにトークテーマを表示します")
 async def talk_theme(interaction: Interaction):
     themes = df_talk.iloc[:, 1].dropna().tolist()
     theme = random.choice(themes)
     await interaction.response.send_message(f"🎤 **今夜のトークテーマ**\n{theme}")
+
+@tasks.loop(hours=24)
+async def daily_zatsudan_theme():
+    now = datetime.utcnow() + timedelta(hours=9)
+    if now.hour != 7:
+        return
+    channel = bot.get_channel(ZATSUDAN_CHANNEL_ID)
+    if channel:
+        theme = df_zatsudan.sample(1).iloc[0]["雑談テーマ"]
+        await channel.send(f"🌞 おはようございます！今日の雑談テーマはこちら：\n💬 {theme}")
+
+@daily_zatsudan_theme.before_loop
+async def before_daily_zatsudan_theme():
+    await bot.wait_until_ready()
 
 @tree.command(name="schedule", description="日程調整用の投票を作成します")
 @app_commands.describe(
