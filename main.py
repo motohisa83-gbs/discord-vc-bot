@@ -28,7 +28,7 @@ schedule_votes = {}
 
 # クイズ・トーク・雑談テーマの読み込み
 df = pd.read_excel("mba_quiz_multiple_choice_template_fill.xlsx")
-df_talk = pd.read_excel("talk_theme.xlsx", skiprows=3)
+df_talk = pd.read_excel("talk_theme.xlsx", header=2).rename(columns={"No.": "No", "トークテーマ": "テーマ", "カテゴリ": "カテゴリ"})
 df_zatsudan = pd.read_excel("zatsudan_themes.xlsx")
 
 class QuizView(View):
@@ -83,10 +83,21 @@ async def on_ready():
     daily_zatsudan_theme.start()
 
 @tree.command(name="talk_theme", description="ランダムにトークテーマを表示します")
-async def talk_theme(interaction: Interaction):
-    themes = df_talk.iloc[:, 1].dropna().tolist()
-    theme = random.choice(themes)
-    await interaction.response.send_message(f"🎤 **今夜のトークテーマ**\n{theme}")
+@app_commands.describe(category="バリカタ、かため、ふつう、やわらかめ、バリやわ から選択（省略可）")
+async def talk_theme(interaction: Interaction, category: str = None):
+    try:
+        if category:
+            filtered = df_talk[df_talk["カテゴリ"] == category]
+            if filtered.empty:
+                await interaction.response.send_message(f"⚠️ 指定されたカテゴリ '{category}' のテーマが見つかりませんでした。", ephemeral=True)
+                return
+            theme = filtered.sample(1).iloc[0]["テーマ"]
+        else:
+            theme = df_talk.sample(1).iloc[0]["テーマ"]
+
+        await interaction.response.send_message(f"🎤 **今日のトークテーマ**\n{theme}")
+    except Exception as e:
+        await interaction.response.send_message(f"エラーが発生しました: {e}", ephemeral=True)
 
 @tasks.loop(hours=24)
 async def daily_zatsudan_theme():
