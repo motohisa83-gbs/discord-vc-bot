@@ -99,6 +99,29 @@ async def talk_theme(interaction: Interaction, category: str = None):
     except Exception as e:
         await interaction.response.send_message(f"エラーが発生しました: {e}", ephemeral=True)
 
+@tree.command(name="vc_grouping", description="ボイスチャットの参加者をランダムにグループ分けします")
+@app_commands.describe(group_size="1グループあたりの人数")
+async def vc_grouping(interaction: Interaction, group_size: int):
+    channel = interaction.guild.get_channel(TARGET_VC_CHANNEL_ID)
+    if not channel or not channel.members:
+        await interaction.response.send_message("VCに参加しているメンバーがいません。", ephemeral=True)
+        return
+
+    members = [m.display_name for m in channel.members if not m.bot]
+    if not members:
+        await interaction.response.send_message("VC内にユーザーがいません。", ephemeral=True)
+        return
+
+    random.shuffle(members)
+    groups = [members[i:i + group_size] for i in range(0, len(members), group_size)]
+
+    msg = "👥 **グループ分け結果**\n"
+    for idx, group in enumerate(groups, 1):
+        names = ", ".join(group)
+        msg += f"**グループ{idx}**: {names}\n"
+
+    await interaction.response.send_message(msg)
+
 @tasks.loop(hours=24)
 async def daily_zatsudan_theme():
     now = datetime.utcnow() + timedelta(hours=9)
